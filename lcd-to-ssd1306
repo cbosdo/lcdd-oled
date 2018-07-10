@@ -1,0 +1,131 @@
+#!/usr/bin/python3
+# Copyright 2018 Cedric Bosdonnat <cedric.bosdonnat@free.fr>
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy of
+# this software and associated documentation files (the "Software"), to deal in
+# the Software without restriction, including without limitation the rights to
+# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+# the Software, and to permit persons to whom the Software is furnished to do so,
+# subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+# FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+# COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+# IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+# CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+import Adafruit_SSD1306
+
+from PIL import Image
+from PIL import ImageDraw
+from PIL import ImageFont
+
+import sys
+from datetime import datetime
+import subprocess
+import atexit
+import os.path
+import threading
+import time
+
+lock = threading.Lock()
+txt = ' '
+
+class Display(threading.Thread):
+    def __init__(self):
+        super(Display, self).__init__()
+        self.currentTxt = ''
+        self.disp = Adafruit_SSD1306.SSD1306_128_64(rst=None)
+
+        # Initialize library.
+        self.disp.begin()
+        self.disp.clear()
+        self.disp.display()
+
+    def run(self):
+        global lock
+        global txt
+
+        font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf', 8)
+
+        while True:
+            lock.acquire()
+            newtxt = txt
+            lock.release()
+
+            if not newtxt:
+                break
+
+            # No need to refresh for nothing
+            if self.currentTxt == newtxt:
+                continue
+
+            # Create blank image for drawing.
+            # Make sure to create image with mode '1' for 1-bit color.
+            width = self.disp.width
+            height = self.disp.height
+            image = Image.new('1', (width, height))
+
+            # Get drawing object to draw on image.
+            draw = ImageDraw.Draw(image)
+
+            # Draw a black filled box to clear the image.
+            draw.rectangle((0, 0, width, height), outline=0, fill=0)
+
+            # osmc's Pillow is too old: can't handle multiline text
+            lines = newtxt.split('\n')
+            y = 2
+            for line in lines:
+                draw.text((2, y), line, font=font, fill=255)
+                size = font.getsize(line)
+                y = y + size[1] + 2
+
+            # Display image.
+            self.disp.image(image)
+            # This call takes a lot of time for a single frame!
+            self.disp.display()
+
+            self.currentTxt = newtxt
+
+def main():
+    global lock
+    global txt
+
+    proc = subprocess.Popen(['LCDd', '-f', '-i', 'false', '-d', 'text'],
+                            stdout=subprocess.PIPE,
+                            universal_newlines=True)
+
+    def cleanup():
+        proc.kill()
+    atexit.register(cleanup)
+
+    # Start the display thread
+    display = Display()
+    display.start()
+
+    # Loop over LCDd output to cut into screens
+    try:
+        line = proc.stdout.readline()
+        screen = ''
+        while line:
+            if line == '+--------------------+\n':
+                if len(screen) > 0:
+                    lock.acquire()
+                    txt = screen
+                    lock.release()
+                    screen = ''
+            else:
+                screen = screen + line.strip('|\n') + '\n'
+            line = proc.stdout.readline()
+
+    finally:
+        # Wait for display thread to finish
+        txt = None
+        display.join()
+
+if __name__ == '__main__':
+    main()

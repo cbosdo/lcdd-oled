@@ -1,0 +1,8 @@
+[Unit]
+Description=LCDd Daemon writing to OLED screen
+
+[Service]
+ExecStart=/usr/bin/python3 /home/osmc/lcdd-oled/lcd-to-ssd1306
+
+[Install]
+WantedBy=multi-user.target
